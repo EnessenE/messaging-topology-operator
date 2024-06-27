@@ -1,0 +1,44 @@
+# This action updates operator version, CRD, and clusterrole in our helm chart
+# For more information see https://github.com/rabbitmq-pro/tanzu-rabbitmq-operator-chart
+name: update_helm_chart
+
+on:
+  release:
+    types: [published]
+    
+  workflow_dispatch:
+
+env:
+
+jobs:
+    create-chart-pr:
+        name: Create pull request to char repo
+        runs-on: ubuntu-latest
+        steps:
+        - name: Checkout
+          uses: actions/checkout@v4
+        - name: Checkout helm repo
+          uses: actions/checkout@v4
+          with:
+            repository: rabbitmq-pro/tanzu-rabbitmq-operator-chart
+            token: ${{ secrets.GIT_HUB_INFRA_REPO_ACCESS_TOKEN }}
+            path: ./tanzu-rabbitmq-operator-chart
+
+        - name: Update helm released version and CRD
+          run: |   
+            BUNDLE_VERSION=${GITHUB_REF#refs/*/} 
+            BUNDLE_VERSION=${BUNDLE_VERSION:1}
+            cd ./tanzu-rabbitmq-operator-chart
+            git branch topology_operator_update_crd_and_versions_$BUNDLE_VERSION
+            git checkout topology_operator_update_crd_and_versions_$BUNDLE_VERSION
+            cp ./../config/crd/bases/*.yaml ./crds/messaging-topology-operator/
+            sed -i '' 's/messaging-topology-operator:.*/messaging-topology-operator:$BUNDLE_VERSION/' ./Chart.yaml
+            python3 ./scripts/update_cluster_operator_clusterrole.py ./scripts/generators/messaging-topology-operator/clusterrole.yml ./scripts/generators/messaging-topology-operator/clusterrole-generator.yml 
+            python3 ./scripts/update_cluster_operator_value_version.py ./../values.yaml "rabbitmqoperator/messaging-topology-operator" $BUNDLE_VERSION
+            python3 ./scripts/update_topology_webhook_configurations.py.py ./scripts/generators/messaging-topology-operator/wehhook_configuration.yml ./../templates/messaging-topology-operator/validating-webhook-configuration.yaml
+            cp ./scripts/generators/messaging-topology-operator/clusterrole-generator.yml  ./../templates/messaging-topology-operator/clusterrole.yaml 
+            git checkout ./scripts/generators/messaging-topology-operator/clusterrole-generator.yml
+            git add .
+            git commit -m "Updating RabbitMQ messaging topology operator version and CRD"
+            git push origin topology_operator_update_crd_and_versions_$BUNDLE_VERSION
+            gh pr create --title "RabbitMQ cluster operator: Update versions and CRD" --base main
